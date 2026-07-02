@@ -19,8 +19,11 @@ extra_info 约定(prepare_data.py 与 rollout 环境共同维护):
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 from .budget_state import BudgetSpec
 from .hindsight import StepCost, calibration_pairs
@@ -67,6 +70,11 @@ def score_trajectory(
             for p in parsed
         ]
     n = min(len(parsed), len(step_tokens), len(step_searches))
+    if not (len(parsed) == len(step_tokens) == len(step_searches)):
+        _log.warning(
+            "step count mismatch: parsed=%d, step_tokens=%d, step_searches=%d; truncating to %d",
+            len(parsed), len(step_tokens), len(step_searches), n,
+        )
     costs = [StepCost(tokens=step_tokens[i], searches=step_searches[i]) for i in range(n)]
     estimates = [parsed[i].estimate for i in range(n)]
 

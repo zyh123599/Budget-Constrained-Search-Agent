@@ -59,7 +59,7 @@ class StepOutput:
 
 _THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 _ESTIMATE_RE = re.compile(r"<estimate>(.*?)</estimate>", re.DOTALL)
-_NUMBER_RE = re.compile(r"[-+]?\d+(?:\.\d+)?")
+_NUMBER_RE = re.compile(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
 _ACTION_RES: dict[Action, re.Pattern[str]] = {
     Action.SEARCH: re.compile(r"<search>(.*?)</search>", re.DOTALL),
     Action.PIVOT: re.compile(r"<pivot>(.*?)</pivot>", re.DOTALL),
@@ -77,7 +77,7 @@ def parse_estimate(text: str) -> Estimate | None:
     """
     named = {}
     for key in ("low", "high", "p"):
-        m = re.search(rf"\b{key}\s*[=::]\s*([-+]?\d+(?:\.\d+)?)", text)
+        m = re.search(rf"\b{key}\s*[=::]\s*([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)", text)
         if m:
             named[key] = float(m.group(1))
     if len(named) == 3:
@@ -110,10 +110,13 @@ def parse_step(text: str) -> StepOutput:
         out.format_ok = False
         out.errors.append("missing <estimate>")
 
+    # 先移除 <think> 块,防止模型在推理中"排练"的动作标签被误匹配
+    text_no_think = _THINK_RE.sub("", text)
+
     # 按出现位置取最先的动作标签;多个动作标签视为格式警告但仍取第一个
     hits: list[tuple[int, Action, str]] = []
     for action, pattern in _ACTION_RES.items():
-        m = pattern.search(text)
+        m = pattern.search(text_no_think)
         if m:
             content = next((g for g in m.groups() if g is not None), "") if m.groups() else ""
             hits.append((m.start(), action, content.strip()))

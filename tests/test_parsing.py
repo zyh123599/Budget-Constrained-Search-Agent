@@ -79,3 +79,25 @@ def test_last_estimate_wins():
         "<estimate>100 300 0.8</estimate><answer>x</answer>"
     )
     assert out.estimate.low == 100 and out.estimate.p_success == 0.8
+
+
+def test_action_inside_think_is_ignored():
+    out = parse_step(
+        "<think>I could try <search>capital of France</search> but I already know</think>"
+        "<estimate> low=50 high=100 p=0.9 </estimate>"
+        "<answer>Paris</answer>"
+    )
+    assert out.action is Action.ANSWER
+    assert out.content == "Paris"
+
+
+def test_scientific_notation_estimate():
+    est = parse_estimate("low=1e3 high=5e3 p=0.7")
+    assert est is not None
+    assert est.low == 1000.0 and est.high == 5000.0 and est.p_success == 0.7
+
+
+def test_scientific_notation_bare_triplet():
+    est = parse_estimate("1.5e2 3e3 0.8")
+    assert est is not None
+    assert est.low == 150.0 and est.high == 3000.0 and est.p_success == 0.8
