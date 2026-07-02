@@ -14,7 +14,7 @@ Calibration-Driven Budget-Conditioned Policy Learning for Search Agents
 ## 仓库结构
 
 ```
-budget_agent/            核心库(纯 Python,零依赖,69 项单元测试)
+budget_agent/            核心库(纯 Python,零依赖,单元测试锁定关键性质)
 ├── budget_state.py      §4.1 预算状态增广:BudgetSpec / BudgetState / <budget> 块渲染
 ├── parsing.py           §4.2 动作与估计头解析:五动作 + ⟨ĉ_low, ĉ_high, p̂⟩,格式鲁棒
 ├── winkler.py           §4.3 Winkler interval score(proper scoring rule,防区间刷宽)
@@ -41,7 +41,7 @@ docs/                    研究计划 / 查新表 / 文献笔记 / 实验日志
 
 ```bash
 pip install -e ".[dev]"
-pytest                        # 69 项测试,零 GPU、零网络
+pytest                        # 全套单测,零 GPU、零网络
 ```
 
 ## 训练管线(2×A800)
