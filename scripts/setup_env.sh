@@ -7,7 +7,7 @@ set -euo pipefail
 # ---------- 主训练环境 ----------
 conda create -n searchr1 python=3.10 -y
 conda run -n searchr1 pip install torch --index-url https://download.pytorch.org/whl/cu121
-conda run -n searchr1 pip install vllm verl wandb datasets pandas pyarrow
+conda run -n searchr1 pip install vllm verl wandb datasets pandas pyarrow requests accelerate
 conda run -n searchr1 pip install flash-attn --no-build-isolation
 
 # Search-R1 环境代码(本地检索版多轮 rollout 循环)

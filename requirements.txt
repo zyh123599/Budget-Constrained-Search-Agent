@@ -11,6 +11,11 @@ flash-attn
 datasets
 pandas
 pyarrow
+requests
+
+# --- SFT(scripts/sft_train.py)---
+transformers
+accelerate
 
 # --- 实验管理 ---
 wandb

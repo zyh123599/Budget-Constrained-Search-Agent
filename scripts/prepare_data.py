@@ -33,8 +33,10 @@ from budget_agent.prompts import render_prompt
 FLASHRAG_REPO = "RUC-NLPIR/FlashRAG_datasets"
 
 
-def build_row(question: str, answers: list[str], source: str, idx: int, spec, split: str) -> dict:
-    prompt = render_prompt(question, BudgetState(spec))
+def build_row(question: str, answers: list[str], source: str, idx: int, spec, split: str,
+              include_budget: bool = True, estimate_mode: str = "before_action") -> dict:
+    prompt = render_prompt(question, BudgetState(spec),
+                           include_budget=include_budget, estimate_mode=estimate_mode)
     return {
         "data_source": source,
         "prompt": [{"role": "user", "content": prompt}],
@@ -61,6 +63,10 @@ def main() -> None:
     parser.add_argument("--grid", choices=["train", "interp", "extrap"], default="interp")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-per-dataset", type=int, default=None)
+    parser.add_argument("--include-budget", action=argparse.BooleanOptionalAction, default=True,
+                        help="消融 C 训练数据用 --no-include-budget")
+    parser.add_argument("--estimate-mode", choices=["before_action", "after_action", "none"],
+                        default="before_action", help="消融 D/E 对应 after_action/none")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -81,7 +87,8 @@ def main() -> None:
             else:
                 specs = eval_budget_grid(args.grid)
             for spec in specs:
-                rows.append(build_row(question, answers, name, idx, spec, args.split))
+                rows.append(build_row(question, answers, name, idx, spec, args.split,
+                                      args.include_budget, args.estimate_mode))
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,182 @@
+# 服务器操作手册(2×A800)
+
+> 面向场景:服务器上没有 Claude Code,所有代码已在本仓库写好,
+> 你只需按本手册顺序执行命令,并把指定产物带回来分析。
+> 每一步都有"预期输出"和"出错怎么办",照着核对即可。
+
+---
+
+## 0. 前置条件核对
+
+| 项 | 要求 | 检查命令 |
+|---|---|---|
+| GPU | 2×A800(80G) | `nvidia-smi` |
+| 磁盘 | ≥ 200 GB 空闲(建议 NVMe;wiki-18 语料+索引约 60–70 GB,模型+检查点+数据集再占几十 GB) | `df -h .` |
+| conda | 任意较新版本 | `conda --version` |
+| 网络 | 能访问 HuggingFace 与 GitHub;不通则用镜像:`export HF_ENDPOINT=https://hf-mirror.com` | `curl -sI https://huggingface.co \| head -1` |
+| CUDA 驱动 | 支持 cu121 | `nvidia-smi` 右上角 CUDA Version ≥ 12.1 |
+
+建议全程在 `tmux` 里操作(下载和训练都以小时计,防 ssh 断连):
+
+```bash
+tmux new -s budget   # 断连后 tmux attach -t budget 恢复
+```
+
+---
+
+## 1. 拉代码 + 零 GPU 自检(5 分钟)
+
+```bash
+git clone -b claude/research-startup-neh7n4 \
+    https://github.com/zyh123599/Budget-Constrained-Search-Agent.git
+cd Budget-Constrained-Search-Agent
+pip install -e ".[dev]"
+pytest                      # 预期:92 passed
+python scripts/smoke_test.py   # 预期:前两项 PASS,后两项 SKIP(训练栈还没装)
+```
+
+**任何一步不符合预期 → 停下,把完整报错带回来。**
+
+## 2. 搭训练/检索双环境(30–60 分钟,主要是下载编译)
+
+```bash
+bash scripts/setup_env.sh
+```
+
+- 创建 `searchr1`(训练:torch/vllm/verl/flash-attn)与 `retriever`(faiss-gpu)两个 conda 环境,并克隆 Search-R1 到 `third_party/`。
+- **flash-attn 编译最慢**(可 20+ 分钟),卡在 `Building wheel` 是正常的。
+- faiss-gpu 的 conda solve 失败时,改用:`conda run -n retriever pip install faiss-gpu-cu12`。
+
+## 3. 下载语料索引 + 常驻检索服务(下载数小时,视带宽)
+
+**单独开一个 tmux 窗口**(服务要一直挂着):
+
+```bash
+tmux new-window -t budget -n retriever
+bash scripts/setup_retrieval.sh
+```
+
+- 下载 wiki-18 语料 + e5 Flat 索引(约 60–70 GB)后启动服务,监听 `:8000`。
+- 看到 `Uvicorn running on ...:8000` 即就绪,**这个窗口不要关**。
+
+回到主窗口验证:
+
+```bash
+bash scripts/run_baseline.sh env-check
+# 预期:打印一段 JSON(检索结果)+ "OK:检索服务可用"
+python scripts/smoke_test.py --retrieval-url http://127.0.0.1:8000/retrieve
+# 预期:4 项全 PASS
+```
+
+## 4. Gate 1:baseline 复现(半天)
+
+### 4a. 官方 checkpoint 推理评估(~1 小时)
+
+```bash
+conda run -n searchr1 --no-capture-output python scripts/prepare_data.py \
+    --datasets nq --split test --budget-mode grid --grid train \
+    --max-per-dataset 500 --out data/eval_nq_test_grid.parquet
+bash scripts/run_baseline.sh eval
+```
+
+**判据:末尾打印的 `EM` 落在 0.45–0.50**(上游 7B-PPO 论文口径 ~0.48)。
+在范围内 → 推理侧环境对齐;偏低很多 → 通常是检索服务没起来或 prompt 模板问题,把 `runs/searchr1_baseline_nq.jsonl` 前几行和终端输出带回来。
+
+### 4b. 训练闭环冒烟(1–2 小时,跑通即可手动 Ctrl-C)
+
+```bash
+bash scripts/run_baseline.sh train-smoke
+```
+
+**判据:能看到 verl 的 step 日志、reward/loss 在动、无 OOM。** 跑 20–50 步即可停。
+报错时:上游脚本字段名随 verl 版本演进,把 `runs/baseline_train_smoke.log` 带回来,我来改配置。
+
+> **4a + 4b 都过 = Gate 1 基建侧通过**,填进 `docs/experiment_log.md`。
+
+## 5. 方法管线首跑(方法 v1,Gate 2 之前的主线)
+
+### 5a. 生成预算增广数据(10 分钟)
+
+```bash
+conda run -n searchr1 --no-capture-output python scripts/prepare_data.py \
+    --datasets nq hotpotqa --split train --budget-mode sample --out data/train.parquet
+conda run -n searchr1 --no-capture-output python scripts/prepare_data.py \
+    --datasets nq --split test --budget-mode grid --grid interp \
+    --max-per-dataset 500 --out data/eval_interp.parquet
+conda run -n searchr1 --no-capture-output python scripts/prepare_data.py \
+    --datasets nq --split test --budget-mode grid --grid extrap \
+    --max-per-dataset 500 --out data/eval_extrap.parquet
+```
+
+### 5b. SFT 热启动(2–4 小时,含采样)
+
+```bash
+bash scripts/run_sft.sh
+```
+
+一条龙:基座 Qwen3-4B rollout 采 800 条示范 → hindsight 重标注 → SFT。
+产物 `checkpoints/qwen3_4b_sft`。中途看 `kept N, skipped M`:**kept < 100 时说明基座格式遵循率太低**,把 `runs/sft_demos_raw.jsonl` 前几行带回来,我调 prompt 或改用 API 蒸馏。
+
+验证 SFT 效果(格式遵循率应大幅提高):
+
+```bash
+conda run -n searchr1 --no-capture-output python scripts/rollout_eval.py \
+    --model checkpoints/qwen3_4b_sft --data data/eval_interp.parquet \
+    --limit 100 --tensor-parallel 2 --out runs/sft_check.jsonl
+conda run -n searchr1 --no-capture-output python scripts/eval_budget_sweep.py runs/sft_check.jsonl
+```
+
+### 5c. GRPO 主训练(数天)
+
+把 `configs/grpo_qwen3_4b.yaml` 里 `actor_rollout_ref.model.path` 改成 `checkpoints/qwen3_4b_sft`,然后:
+
+```bash
+bash scripts/train_grpo.sh
+```
+
+**首跑必看:** verl/Search-R1 版本演进可能导致配置字段名不匹配,报
+`ConfigAttributeError`/`MissingMandatoryValue` 时把完整报错带回来,我来对齐字段。
+多轮检索 rollout 与 `<budget>` 块逐轮重注入依赖 Search-R1 的 generation 循环,
+若其接口对不上,同样把报错带回来——这属于预期内的接线工作,不是设计问题。
+
+### 5d. 评估(每个 checkpoint ~1 小时)
+
+```bash
+conda run -n searchr1 --no-capture-output python scripts/rollout_eval.py \
+    --model <checkpoint路径> --data data/eval_interp.parquet \
+    --tensor-parallel 2 --out runs/grpo_interp.jsonl
+conda run -n searchr1 --no-capture-output python scripts/eval_budget_sweep.py \
+    runs/grpo_interp.jsonl        # 四大生死指标一站式
+```
+
+外推档换 `data/eval_extrap.parquet`。干预实验(§5.4,论文最硬的牌,主训练收敛后再跑):
+
+```bash
+conda run -n searchr1 --no-capture-output python scripts/rollout_eval.py \
+    --model <checkpoint> --data data/eval_interp.parquet \
+    --intervene noise --sigma 0.5 --tensor-parallel 2 --out runs/intervene_s05.jsonl
+# σ 扫 {0(=oracle), 0.25, 0.5, 1.0, 2.0},加上 .control.jsonl 自动保存的对照组
+```
+
+---
+
+## 6. 带回来给我的东西(按优先级)
+
+1. **每一步的终端输出**(尤其是 EM/violation 汇总行和任何报错栈);
+2. `runs/` 下所有 `.jsonl`(轨迹文件,我可以离线重放出全部指标和图);
+3. `runs/baseline_train_smoke.log`、wandb 的 run 链接或曲线截图;
+4. 修改过的配置文件(如果你为了跑通改了什么)。
+
+拿到这些我就能:判 Gate 1、诊断训练问题、画首张 Pareto 曲线、迭代 reward 权重。
+
+## 7. 常见故障速查
+
+| 症状 | 原因 | 处置 |
+|---|---|---|
+| HF 下载超时/403 | 网络不通 | `export HF_ENDPOINT=https://hf-mirror.com` 后重跑 |
+| flash-attn 装不上 | 编译环境缺 | `pip install flash-attn --no-build-isolation`;还不行就先不装(vLLM 有回退) |
+| faiss-gpu solve 失败 | conda 源问题 | `pip install faiss-gpu-cu12` |
+| vLLM 启动 OOM | 显存被占 | 降 `--gpu-memory-utilization 0.7`;确认检索服务没占训练卡(`CUDA_VISIBLE_DEVICES` 分卡) |
+| 检索服务占了训练卡显存 | faiss-gpu 默认用 0 号卡 | 起服务前 `export CUDA_VISIBLE_DEVICES=1`,或索引改 CPU(去掉 `--faiss_gpu`,内存需 ≥64G) |
+| verl 配置字段报错 | 版本演进 | 对照 `third_party/Search-R1/train_grpo.sh` 的写法改 `configs/grpo_qwen3_4b.yaml`,或把报错带回来 |
+| rollout EM 异常低 | prompt/模板不匹配 | baseline 检查点务必 `--no-chat`;instruct 模型务必默认 `--chat` |

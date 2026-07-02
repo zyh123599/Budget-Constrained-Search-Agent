@@ -30,8 +30,14 @@ configs/
 scripts/
 ├── setup_env.sh         训练/检索双 conda 环境(verl + vLLM + FSDP / faiss-gpu)
 ├── setup_retrieval.sh   wiki-18 语料 + e5 索引下载与检索服务常驻
-├── prepare_data.py      FlashRAG 数据 → 预算增广 parquet(训练采样 / 评测网格)
-├── train_grpo.sh        训练启动器
+├── smoke_test.py        落地冒烟测试:核心性质 / 奖励链路 / 检索连通 / 训练栈
+├── prepare_data.py      FlashRAG 数据 → 预算增广 parquet(训练采样 / 评测网格 / 消融变体)
+├── run_baseline.sh      Gate 1:Search-R1 baseline 复现(env-check / eval / train-smoke)
+├── rollout_eval.py      vLLM 多轮 rollout 轨迹生成(评估 / baseline / §5.4 干预实验)
+├── run_sft.sh           SFT 热启动一条龙:采示范 → 重标注 → 训练
+├── make_sft_data.py     轨迹 → hindsight 重标注的多轮对话 SFT 数据
+├── sft_train.py         SFT 训练(assistant-only loss,单卡可跑)
+├── train_grpo.sh        GRPO 主训练启动器
 └── eval_budget_sweep.py 离线轨迹重放评估(预算 sweep 不重训,§6)
 tests/                   核心库单元测试(含防 hack 性质测试)
 docs/                    研究计划 / 查新表 / 文献笔记 / 实验日志
@@ -46,13 +52,20 @@ pytest                        # 全套单测,零 GPU、零网络
 
 ## 训练管线(2×A800)
 
+**逐步操作手册(在没有 Claude Code 的服务器上照做即可):[docs/server_runbook.md](docs/server_runbook.md)**
+
 ```bash
 bash scripts/setup_env.sh                    # 1. 双环境:searchr1 + retriever
 bash scripts/setup_retrieval.sh              # 2. 检索服务常驻 :8000(零 API 成本)
+python scripts/smoke_test.py --retrieval-url http://127.0.0.1:8000/retrieve
+bash scripts/run_baseline.sh eval            # 3. Gate 1:baseline EM 对齐
 python scripts/prepare_data.py --datasets nq hotpotqa --split train \
-    --budget-mode sample --out data/train.parquet          # 3. 预算增广数据
-bash scripts/train_grpo.sh                   # 4. SFT 热启动后接 GRPO 主训练
-python scripts/eval_budget_sweep.py runs/<ckpt>.jsonl      # 5. 离线重放:四大指标
+    --budget-mode sample --out data/train.parquet          # 4. 预算增广数据
+bash scripts/run_sft.sh                      # 5. SFT 热启动(采示范→重标注→训练)
+bash scripts/train_grpo.sh                   # 6. GRPO 主训练
+python scripts/rollout_eval.py --model <ckpt> --data data/eval_interp.parquet \
+    --tensor-parallel 2 --out runs/grpo_interp.jsonl       # 7. rollout 轨迹
+python scripts/eval_budget_sweep.py runs/grpo_interp.jsonl # 8. 四大指标
 ```
 
 ## 设计决策备忘(写作时的证据链)
