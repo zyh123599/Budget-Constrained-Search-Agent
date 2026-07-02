@@ -19,6 +19,7 @@ from .metrics import (
 from .parsing import Action, Estimate, StepOutput, parse_estimate, parse_step
 from .prompts import render_prompt
 from .qa_metrics import cover_exact_match, exact_match, f1_score
+from .sft import SFTConfig, relabel_step, relabel_trajectory
 from .rewards import (
     CurriculumSchedule,
     RewardBreakdown,
