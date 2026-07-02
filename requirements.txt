@@ -1,0 +1,19 @@
+# 核心库(budget_agent/)零第三方依赖,可独立 pip install -e . 使用。
+# 以下为训练机(2×A800)完整栈;版本以 scripts/setup_env.sh 实际解析为准。
+
+# --- 训练栈 ---
+torch>=2.4
+verl
+vllm
+flash-attn
+
+# --- 数据 ---
+datasets
+pandas
+pyarrow
+
+# --- 实验管理 ---
+wandb
+
+# --- 开发 ---
+pytest>=7

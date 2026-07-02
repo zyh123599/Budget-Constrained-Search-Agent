@@ -1,0 +1,62 @@
+# GRPO 主训练配置模板 —— Qwen3-4B 全参,2×A800(80G)(研究计划 §4.4 / §6)。
+# 基于 verl 配置约定;实际字段名以所装 verl 版本 + Search-R1 训练脚本为准,
+# 本文件是 train_grpo.sh 中 hydra override 的单一事实来源。
+#
+# 显存策略:response ≤4k、小 batch + 梯度累积、FSDP 参数/优化器 offload、
+# vLLM rollout 占卡 0.4——按 §6 判断真实瓶颈在 rollout 吞吐而非显存。
+
+data:
+  train_files: data/train.parquet            # scripts/prepare_data.py 产物
+  val_files: data/eval_interp.parquet
+  train_batch_size: 256
+  max_prompt_length: 4096
+  max_response_length: 4096                  # §6:response ≤4–8k,先 4k 调稳
+
+actor_rollout_ref:
+  model:
+    path: Qwen/Qwen3-4B                      # 主线:4B 全参;8B 仅 LoRA 验证
+    enable_gradient_checkpointing: true
+  actor:
+    optim:
+      lr: 1.0e-6
+    ppo_mini_batch_size: 64
+    ppo_micro_batch_size_per_gpu: 4          # 梯度累积由 mini/micro 比值决定
+    use_kl_loss: true                        # GRPO + KL 约束(§9 训练稳定性预案)
+    kl_loss_coef: 0.001
+    fsdp_config:
+      param_offload: true
+      optimizer_offload: true
+  rollout:
+    name: vllm
+    tensor_model_parallel_size: 1
+    gpu_memory_utilization: 0.4
+    n: 8                                     # GRPO 每 prompt 采样组大小
+    temperature: 1.0
+    # 多轮检索循环由 Search-R1 环境驱动;预算档注入见 prepare_data.py,
+    # 每轮 <information> 后由环境重新注入最新 <budget> 块(prompts.py 约定)
+    max_turns: 10
+  ref:
+    fsdp_config:
+      param_offload: true
+
+algorithm:
+  adv_estimator: grpo
+  # 课程调度(rewards.CurriculumSchedule):无预算 -> 软惩罚(λ 爬升)-> 硬约束(μ 生效)
+  # progress 由训练循环写入 extra_info,verl_reward.compute_score 内部换挡
+
+custom_reward_function:
+  path: budget_agent/verl_reward.py
+  name: compute_score
+
+retriever:
+  url: http://127.0.0.1:8000/retrieve
+  topk: 3
+
+trainer:
+  project_name: budget-agent
+  experiment_name: qwen3_4b_grpo_v1
+  n_gpus_per_node: 2
+  nnodes: 1
+  save_freq: 50
+  test_freq: 25
+  total_epochs: 1

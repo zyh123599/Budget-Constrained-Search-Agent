@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "budget-agent"
+version = "0.1.0"
+description = "Calibration-Driven Budget-Conditioned Policy Learning for Search Agents — core library"
+requires-python = ">=3.10"
+# 核心库零第三方依赖;训练/数据依赖见 requirements.txt
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+include = ["budget_agent*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
