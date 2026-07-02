@@ -33,6 +33,8 @@ class RewardConfig:
     format_penalty: float = 0.1    # 每步格式错误的轻惩罚(封顶一次)
     calibration_clip: float = 5.0  # 单步归一化 Winkler 的截断上限,保持
                                    # reward 尺度稳定,防校准项淹没答案奖励
+    calibration_rule: str = "winkler"  # "winkler"(proper)| "coverage"(朴素,
+                                   # 仅消融 F 用:可被无限宽区间 hack,预期失败)
 
 
 @dataclass(frozen=True)
@@ -88,14 +90,22 @@ def compute_reward(
     violation_term = config.mu_violation if violated else 0.0
 
     if calib_pairs:
-        mean_w = sum(
-            min(
-                config.calibration_clip,
-                normalized_winkler(e.low, e.high, c_true, scale=b_scalar, alpha=config.alpha),
-            )
-            for e, c_true in calib_pairs
-        ) / len(calib_pairs)
-        calibration_term = config.eta_calibration * mean_w
+        if config.calibration_rule == "winkler":
+            mean_pen = sum(
+                min(
+                    config.calibration_clip,
+                    normalized_winkler(e.low, e.high, c_true, scale=b_scalar, alpha=config.alpha),
+                )
+                for e, c_true in calib_pairs
+            ) / len(calib_pairs)
+        elif config.calibration_rule == "coverage":
+            # 消融 F:朴素覆盖惩罚 1 − 覆盖率。无宽度项 → 区间报得越宽分越好,
+            # 存在退化解;保留此规则只为定量展示 proper scoring rule 的必要性
+            covered = sum(1 for e, c in calib_pairs if e.low <= c <= e.high)
+            mean_pen = 1.0 - covered / len(calib_pairs)
+        else:
+            raise ValueError(f"unknown calibration_rule: {config.calibration_rule!r}")
+        calibration_term = config.eta_calibration * mean_pen
     else:
         # 全程无有效估计:按截断上限给满额惩罚,防止"干脆不报区间"逃掉校准约束
         calibration_term = config.eta_calibration * config.calibration_clip
