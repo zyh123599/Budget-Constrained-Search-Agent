@@ -12,7 +12,9 @@
 set -euo pipefail
 
 RETRIEVAL_URL="${RETRIEVAL_URL:-http://127.0.0.1:8000/retrieve}"
-BASELINE_CKPT="${BASELINE_CKPT:-PeterGriffinJin/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo}"
+# 注意:HF 用户名是 PeterJinGo(GitHub 用户名 PeterGriffinJin 在 HF 上不存在);
+# 该检查点公开,无需 token,约 15GB
+BASELINE_CKPT="${BASELINE_CKPT:-PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo}"
 
 case "${1:-}" in
   env-check)

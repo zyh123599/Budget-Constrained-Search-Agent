@@ -32,6 +32,17 @@ from typing import List, Optional
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("retrieval_server")
 
+try:
+    from pydantic import BaseModel
+except ImportError:  # 无 pydantic 的环境(本地单测收集)仍可 import 本模块
+    BaseModel = object  # type: ignore[assignment,misc]
+
+
+class QueryRequest(BaseModel):  # 必须在模块顶层定义:Pydantic v2 不支持函数内模型
+    queries: List[str]
+    topk: Optional[int] = None
+    return_scores: bool = False
+
 
 def build_index(index_path: str, gpu_mode: str, omp_threads: int):
     import faiss
@@ -126,8 +137,7 @@ def main() -> None:
     import datasets
     import torch
     import uvicorn
-    from fastapi import FastAPI
-    from pydantic import BaseModel
+    from fastapi import Body, FastAPI
 
     index = build_index(args.index_path, args.gpu_mode, args.omp_threads)
 
@@ -141,11 +151,6 @@ def main() -> None:
     log.info("e5 encoder on %s;service ready at http://%s:%d/retrieve",
              device, args.host, args.port)
 
-    class QueryRequest(BaseModel):
-        queries: List[str]
-        topk: Optional[int] = None
-        return_scores: bool = False
-
     app = FastAPI()
 
     @app.get("/health")
@@ -154,7 +159,7 @@ def main() -> None:
                 "gpu_mode": args.gpu_mode, "topk_default": args.topk}
 
     @app.post("/retrieve")
-    def retrieve(req: QueryRequest):
+    def retrieve(req: QueryRequest = Body(...)):  # 显式 Body:防 FastAPI 误判为查询参数
         k = req.topk or args.topk
         result = []
         for start in range(0, len(req.queries), args.batch_size):

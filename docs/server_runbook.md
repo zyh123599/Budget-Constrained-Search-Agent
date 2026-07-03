@@ -183,7 +183,9 @@ conda run -n searchr1 --no-capture-output python scripts/rollout_eval.py \
 
 | 症状 | 原因 | 处置 |
 |---|---|---|
-| HF 下载超时/403 | 网络不通 | `export HF_ENDPOINT=https://hf-mirror.com` 后重跑 |
+| HF 下载超时/403 | 网络不通 | `export HF_ENDPOINT=https://hf-mirror.com` 后重跑(建议写进 `~/.bashrc`,全程需要) |
+| HF 报 "not a valid model identifier" | 用户名写错:HF 上是 `PeterJinGo`,GitHub 才是 `PeterGriffinJin` | 所有 Search-R1 模型/数据 repo 前缀用 `PeterJinGo/`;全部公开,无需 token |
+| faiss 导入失败 / `GLIBCXX_x.x.xx not found` | 系统 libstdc++ 过旧 | `setup_retrieval.sh` 已自动 `export LD_LIBRARY_PATH=$CONDA_PREFIX/lib`;手动跑 retriever 环境的命令时同样加上 |
 | flash-attn 装不上 | 编译环境缺 | `pip install flash-attn --no-build-isolation`;还不行就先不装(vLLM 有回退) |
 | faiss-gpu solve 失败 | conda 源问题 | `pip install faiss-gpu-cu12` |
 | faiss cudaMalloc OOM(卡明明空闲) | 索引未分片,fp16 整份(~32GB)复制到单卡失败,或 faiss 构建的多卡支持有问题 | 用本仓库 `retrieval_server.py`(setup_retrieval.sh 已默认):`RETRIEVAL_GPU_MODE=shard`;启动日志确认 `faiss sees 2 GPU(s)`;还不行 → `RETRIEVAL_GPU_MODE=cpu` |
