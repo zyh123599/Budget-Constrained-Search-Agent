@@ -89,8 +89,31 @@ conda run -n searchr1 --no-capture-output python scripts/prepare_data.py \
 bash scripts/run_baseline.sh eval
 ```
 
-**判据:末尾打印的 `EM` 落在 0.45–0.50**(上游 7B-PPO 论文口径 ~0.48)。
-在范围内 → 推理侧环境对齐;偏低很多 → 通常是检索服务没起来或 prompt 模板问题,把 `runs/searchr1_baseline_nq.jsonl` 前几行和终端输出带回来。
+**判据(版本敏感):** 默认检查点(无版本后缀)是 **v0.1 preliminary**(少量训练步数);
+论文的 NQ EM=0.480 是 **v0.2** 口径,两者不可直接对照。实测判读:
+
+- `EM ≥ 0.40` 且下面 probe 的 `hit rate ≥ 0.65` → 环境对齐,冻结为本地 baseline;
+- 不满足 → 先跑 probe(下一步)把问题定位到检索侧或生成侧,再把输出带回来。
+- 想对齐论文数字:`BASELINE_CKPT=PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo-v0.3 bash scripts/run_baseline.sh eval`
+
+**检索侧隔离测试(分钟级,EM 无论高低都建议跑一次留档):**
+
+```bash
+bash scripts/run_baseline.sh probe
+```
+
+只跑检索不跑生成,统计 gold answer 命中 top-3 段落的比例。
+`≥0.65` 检索侧健康;`<0.60` 检索侧有病(脚本会打印排查顺序)。
+
+**baseline 的 Pareto 对比曲线(论文需要,可放到 Gate 1 之后再跑):**
+
+```bash
+bash scripts/run_baseline.sh pareto    # 500 题 × 9 预算档,数小时
+```
+
+baseline 不感知预算,单点积不出 Pareto 面积;此命令用外部硬截断协议
+(token 耗尽/检索配额用完 → 强制作答)扫出它在各预算档下的真实成功率–成本曲线,
+这是审稿人必问的"同等约束下 baseline 表现"的答案。
 
 ### 4b. 训练闭环冒烟(1–2 小时,跑通即可手动 Ctrl-C)
 

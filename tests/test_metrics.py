@@ -56,8 +56,12 @@ def test_calibration_report():
 
 
 def test_calibration_report_empty():
+    import math
+
     rep = calibration_report([])
-    assert rep.n == 0 and rep.coverage == 0.0
+    assert rep.n == 0
+    # 无估计 = N/A(NaN),不是 0 也不是 inf:不污染聚合、画图时一眼可见
+    assert math.isnan(rep.coverage) and math.isnan(rep.mean_winkler)
 
 
 def _tier(name, sr, vr, cov):

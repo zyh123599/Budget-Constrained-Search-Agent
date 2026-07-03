@@ -66,7 +66,10 @@ def calibration_report(
     """校准质量报告(生死指标 #3)。覆盖率必须与宽度/Winkler 同时呈报,
     单独的覆盖率会掩盖"无限宽区间"这类退化解。"""
     if not pairs:
-        return CalibrationReport(coverage=0.0, mean_winkler=float("inf"), mean_width=0.0, n=0)
+        # 无估计(如 baseline)时语义是 N/A 而非"无限差":NaN 在聚合/画图时
+        # 一眼可见,inf 会污染均值与坐标轴
+        return CalibrationReport(coverage=float("nan"), mean_winkler=float("nan"),
+                                 mean_width=float("nan"), n=0)
     n = len(pairs)
     covered = sum(1 for e, c in pairs if interval_covers(e.low, e.high, c))
     total_w = sum(winkler_score(e.low, e.high, c, alpha) for e, c in pairs)

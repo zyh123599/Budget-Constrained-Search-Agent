@@ -8,11 +8,14 @@
         → runs/*.jsonl
         → eval_budget_sweep.py(四大生死指标)/ make_sft_data.py(SFT 数据)
 
-三种用途,由 --prompt-style 与 --intervene 切换:
+四种用途,由 --prompt-style / --intervene / --on-exhaust 切换:
 1. 本方法评估(默认):预算增广 prompt,每轮 <information> 后重注 <budget> 块;
 2. Search-R1 baseline 复现(--prompt-style searchr1):原版指令,巨额预算兜底,
    仅用于对齐上游 EM(Gate 1);
-3. 干预实验(§5.4,--intervene oracle|noise):两遍法——第一遍自然 rollout 记录
+3. budget-clipped baseline(--on-exhaust force_answer):baseline 不感知预算,
+   外部硬截断——token 耗尽或检索配额用完时拒绝新检索并强制作答,扫出它在各
+   预算档的真实成功率–成本曲线(论文 Pareto 对比的公平基线);
+4. 干预实验(§5.4,--intervene oracle|noise):两遍法——第一遍自然 rollout 记录
    实际后缀成本作参考真值,第二遍在 </estimate> 处截断、注入 oracle/加噪估计后
    续写动作。oracle 用第一遍的实现成本近似(干预后轨迹会分叉,这是文献通行近似,
    写作时需说明)。
@@ -76,6 +79,7 @@ class Traj:
     step_tokens: list[int] = field(default_factory=list)
     step_searches: list[int] = field(default_factory=list)
     done: bool = False
+    forcing: bool = False  # 预算耗尽,下一轮强制作答(--on-exhaust force_answer)
     final_action: str = ""
     answer: str = ""
     state: BudgetState = None  # type: ignore[assignment]
@@ -136,6 +140,33 @@ def _make_injector(args, rng: random.Random):
     return inject
 
 
+_FORCE_ANSWER_ENV = (
+    "\n\n<information>Budget exhausted. You must stop searching and provide "
+    "your best final answer now.</information>\n\n<answer>"
+)
+
+
+def _force_answers(llm, sampling_cls, trajs: list[Traj], args) -> None:
+    """预算截断的强制作答轮:续写已预开的 <answer> 标签(公平 baseline 协议)。"""
+    forcing = [t for t in trajs if t.forcing and not t.done]
+    if not forcing:
+        return
+    sampling = sampling_cls(
+        temperature=args.temperature, max_tokens=args.force_answer_tokens,
+        stop=["</answer>"], include_stop_str_in_output=True,
+    )
+    outs = llm.generate([t.running for t in forcing], sampling)
+    for t, out in zip(forcing, outs):
+        text, ntok = out.outputs[0].text, len(out.outputs[0].token_ids)
+        t.running += text
+        t.solution += text
+        t.step_tokens.append(ntok)
+        t.step_searches.append(0)
+        t.state.charge(ntok, 0)
+        t.answer = text.split("</answer>")[0].strip()
+        t.done, t.final_action = True, "forced_answer"
+
+
 def _rollout(llm, sampling_cls, trajs: list[Traj], args, inject=None) -> None:
     """批量多轮 rollout,就地推进 trajs。inject 非空时启用 §5.4 干预协议。"""
     normal = sampling_cls(
@@ -148,8 +179,11 @@ def _rollout(llm, sampling_cls, trajs: list[Traj], args, inject=None) -> None:
     )
 
     for turn in range(args.max_turns):
-        active = [t for t in trajs if not t.done]
+        _force_answers(llm, sampling_cls, trajs, args)
+        active = [t for t in trajs if not t.done and not t.forcing]
         if not active:
+            if any(t.forcing and not t.done for t in trajs):
+                continue
             break
 
         if inject is not None:
@@ -176,14 +210,25 @@ def _rollout(llm, sampling_cls, trajs: list[Traj], args, inject=None) -> None:
             t.solution += text
             step = parse_step(t.solution.rsplit("</information>", 1)[-1])
             searched = int(step.action in SEARCH_ACTIONS and bool(step.content))
+            # 预算截断协议:检索预算已尽时拒绝执行新检索(生成 token 照常记账)
+            deny_search = (args.on_exhaust == "force_answer" and searched
+                           and t.state.remaining_searches <= 0)
+            if deny_search:
+                searched = 0
             t.step_tokens.append(ntok)
             t.step_searches.append(searched)
             t.state.charge(ntok, searched)
+            exhausted = (args.on_exhaust == "force_answer"
+                         and (t.state.remaining_tokens <= 0 or deny_search))
 
             if step.action in TERMINAL_ACTIONS:
                 t.done, t.final_action = True, step.action.value
                 if step.action.value == "answer":
                     t.answer = step.content
+            elif exhausted:  # 预算耗尽:下一轮强制作答(公平的 budget-clipped baseline)
+                t.forcing = True
+                t.running += _FORCE_ANSWER_ENV
+                t.solution += _FORCE_ANSWER_ENV
             elif searched:
                 t.final_action = step.action.value
                 pending.append((t, step.content))
@@ -199,6 +244,7 @@ def _rollout(llm, sampling_cls, trajs: list[Traj], args, inject=None) -> None:
                 t.running += env
                 t.solution += env
 
+    _force_answers(llm, sampling_cls, trajs, args)  # 兜底:最后一轮才耗尽预算的
     for t in trajs:  # 超轮数未终止的轨迹
         if not t.done:
             t.done, t.final_action = True, "max_turns"
@@ -220,6 +266,10 @@ def main() -> None:
                         help="套 chat template;Search-R1 基座检查点用 --no-chat")
     parser.add_argument("--intervene", choices=["none", "oracle", "noise"], default="none")
     parser.add_argument("--sigma", type=float, default=0.5, help="加噪干预的相对噪声幅度")
+    parser.add_argument("--on-exhaust", choices=["none", "force_answer"], default="none",
+                        help="force_answer=预算耗尽时强制作答(budget-clipped baseline 的 "
+                             "Pareto sweep 用;本方法默认 none,自主止损是被评估的能力)")
+    parser.add_argument("--force-answer-tokens", type=int, default=64)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max-turns", type=int, default=10)
     parser.add_argument("--max-tokens-per-turn", type=int, default=1024)

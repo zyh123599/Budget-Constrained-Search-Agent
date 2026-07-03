@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -108,12 +109,15 @@ def main() -> None:
     config = RewardConfig(alpha=args.alpha)
     results, points = evaluate(args.trajectories, args.alpha, config)
 
+    def fmt(x: float, width: int, prec: int) -> str:
+        return f"{'n/a':>{width}}" if math.isnan(x) else f"{x:{width}.{prec}f}"
+
     header = f"{'tier':>10} {'succ':>6} {'cost':>9} {'viol':>6} {'cover':>6} {'winkler':>9}"
     print(header + "\n" + "-" * len(header))
     for r in results.values():
         print(
             f"{r.tier:>10} {r.success_rate:6.3f} {r.mean_cost:9.1f} "
-            f"{r.violation_rate:6.3f} {r.coverage:6.3f} {r.mean_winkler:9.1f}"
+            f"{r.violation_rate:6.3f} {fmt(r.coverage, 6, 3)} {fmt(r.mean_winkler, 9, 1)}"
         )
 
     cap = args.cost_cap or (max(c for c, _ in points) * 1.1 if points else 1.0)

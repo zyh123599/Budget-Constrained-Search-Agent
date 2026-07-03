@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 # Gate 1 的另一半:Search-R1 baseline 在 2×A800 上复现(研究计划 §7)。
-# 三个子命令,按顺序执行:
-#   bash scripts/run_baseline.sh env-check   # 检索服务健康检查(秒级)
-#   bash scripts/run_baseline.sh eval        # 官方 checkpoint 推理评估,对齐上游 EM(~1h)
-#   bash scripts/run_baseline.sh train-smoke # verl 训练闭环冒烟:跑通若干步不 OOM(~1-2h)
+# 子命令(按序):
+#   env-check    检索服务健康检查(秒级)
+#   eval         官方 checkpoint 推理评估,对齐上游 EM(~1h)
+#   probe        检索侧隔离测试:answer hit rate,EM 偏低时定位问题在哪一侧(分钟级)
+#   train-smoke  verl 训练闭环冒烟:跑通若干步不 OOM(~1-2h)
+#   pareto       budget-clipped baseline 的 Pareto sweep(论文对比曲线,数小时)
 #
-# 判据(写入 docs/experiment_log.md):
-#   eval:NQ test 上 EM 落在 0.45–0.50(上游 7B-PPO 报告 ~0.48)→ 环境对齐;
-#   train-smoke:loss 曲线在动、无 OOM、检索调用成功 → 训练闭环可用。
-#   两者都过 → Gate 1 基建侧通过。
+# eval 判据(版本敏感,写入 docs/experiment_log.md):
+#   默认检查点(无版本后缀)= v0.1 preliminary(少量训练步数),对应 wandb 项目
+#   Search-R1-nq_hotpotqa_train;论文 (2503.09516) 的 NQ EM=0.480 是 v0.2 口径,
+#   两者不可直接对照。判读:
+#     EM ≥ 0.40 且 probe 的 hit rate ≥ 0.65 → 环境对齐,冻结为本地 baseline;
+#     EM < 0.40 或 hit rate < 0.60        → 先跑 probe 定位检索侧/生成侧。
+#   要对齐论文数字,用 v0.3 检查点:
+#     BASELINE_CKPT=PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo-v0.3
+#   train-smoke 判据:loss 曲线在动、无 OOM、检索调用成功 → 训练闭环可用。
 set -euo pipefail
 
 RETRIEVAL_URL="${RETRIEVAL_URL:-http://127.0.0.1:8000/retrieve}"
@@ -50,7 +57,29 @@ EOF
       --retrieval-url "$RETRIEVAL_URL" \
       --tensor-parallel 2 \
       --out runs/searchr1_baseline_nq.jsonl
-    echo "对齐判据:EM ∈ [0.45, 0.50](上游 7B-PPO ~0.48)"
+    echo "判读见本脚本头部注释:v0.1 检查点 EM ≥ 0.40 + probe hit rate ≥ 0.65 即对齐"
+    ;;
+
+  probe)
+    echo "== 检索侧隔离测试:answer hit rate @ top-3 =="
+    conda run -n searchr1 --no-capture-output python scripts/retrieval_probe.py \
+      --data data/eval_nq_test.parquet --limit 200 --retrieval-url "$RETRIEVAL_URL"
+    ;;
+
+  pareto)
+    echo "== budget-clipped baseline Pareto sweep(500 题 × 9 档,数小时)=="
+    # baseline 不感知预算 → 外部硬截断:token 耗尽/检索配额用完时强制作答。
+    # 这条成功率–成本曲线是论文对比的公平基线(审稿必问)
+    conda run -n searchr1 --no-capture-output python scripts/rollout_eval.py \
+      --model "$BASELINE_CKPT" \
+      --data data/eval_nq_test_grid.parquet \
+      --prompt-style searchr1 --no-chat \
+      --on-exhaust force_answer \
+      --retrieval-url "$RETRIEVAL_URL" \
+      --tensor-parallel 2 \
+      --out runs/searchr1_baseline_pareto.jsonl
+    conda run -n searchr1 --no-capture-output python scripts/eval_budget_sweep.py \
+      runs/searchr1_baseline_pareto.jsonl
     ;;
 
   train-smoke)
@@ -66,7 +95,7 @@ EOF
     ;;
 
   *)
-    echo "用法: bash scripts/run_baseline.sh {env-check|eval|train-smoke}"
+    echo "用法: bash scripts/run_baseline.sh {env-check|eval|probe|train-smoke|pareto}"
     exit 1
     ;;
 esac
