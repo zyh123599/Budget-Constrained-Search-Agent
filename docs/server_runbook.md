@@ -57,7 +57,17 @@ bash scripts/setup_retrieval.sh
 ```
 
 - 下载 wiki-18 语料 + e5 Flat 索引(约 60–70 GB)后启动服务,监听 `:8000`。
-- 看到 `Uvicorn running on ...:8000` 即就绪,**这个窗口不要关**。
+- 服务用的是本仓库自带的 `scripts/retrieval_server.py`(API 与上游 Search-R1 完全兼容),
+  61GB Flat 索引以 **fp16 分片到两张卡,每卡只占 ~15GB**,给训练留足显存。
+- 启动日志会打印 `faiss sees N GPU(s)` 和每卡预估占用——**N 必须是 2**;
+  是 1 的话检查该窗口的 `CUDA_VISIBLE_DEVICES` 是否被设置过。
+- 看到 `service ready` / `Uvicorn running on ...:8000` 即就绪,**这个窗口不要关**。
+- GPU 上放不下(或 faiss GPU 支持有问题)时的兜底:
+  `RETRIEVAL_GPU_MODE=cpu bash scripts/setup_retrieval.sh`(索引留内存,需 ~64GB 空闲 RAM)。
+
+**显存预算(两卡各 80GB,索引分片共卡时):** faiss 索引 ~15GB/卡 + e5 编码器 ~1GB,
+剩 ~63GB/卡给 vLLM 与训练。`rollout_eval.py` 默认 `--gpu-memory-utilization 0.6`
+已按此留了余量;若你把索引放 CPU,可提到 `0.85` 提吞吐。
 
 回到主窗口验证:
 
@@ -176,7 +186,8 @@ conda run -n searchr1 --no-capture-output python scripts/rollout_eval.py \
 | HF 下载超时/403 | 网络不通 | `export HF_ENDPOINT=https://hf-mirror.com` 后重跑 |
 | flash-attn 装不上 | 编译环境缺 | `pip install flash-attn --no-build-isolation`;还不行就先不装(vLLM 有回退) |
 | faiss-gpu solve 失败 | conda 源问题 | `pip install faiss-gpu-cu12` |
-| vLLM 启动 OOM | 显存被占 | 降 `--gpu-memory-utilization 0.7`;确认检索服务没占训练卡(`CUDA_VISIBLE_DEVICES` 分卡) |
-| 检索服务占了训练卡显存 | faiss-gpu 默认用 0 号卡 | 起服务前 `export CUDA_VISIBLE_DEVICES=1`,或索引改 CPU(去掉 `--faiss_gpu`,内存需 ≥64G) |
+| faiss cudaMalloc OOM(卡明明空闲) | 索引未分片,fp16 整份(~32GB)复制到单卡失败,或 faiss 构建的多卡支持有问题 | 用本仓库 `retrieval_server.py`(setup_retrieval.sh 已默认):`RETRIEVAL_GPU_MODE=shard`;启动日志确认 `faiss sees 2 GPU(s)`;还不行 → `RETRIEVAL_GPU_MODE=cpu` |
+| vLLM 启动 OOM | 检索索引分片占了每卡 ~15GB | 降 `--gpu-memory-utilization`(默认 0.6 已留余量,再降到 0.5);或索引改 CPU 模式后提回 0.85 |
+| 检索服务想独占一张卡 | 默认 shard 用两张卡 | `CUDA_VISIBLE_DEVICES=1 RETRIEVAL_GPU_MODE=single bash scripts/setup_retrieval.sh`(单卡 fp16 整份 ~31GB);训练侧则只见 0 号卡 |
 | verl 配置字段报错 | 版本演进 | 对照 `third_party/Search-R1/train_grpo.sh` 的写法改 `configs/grpo_qwen3_4b.yaml`,或把报错带回来 |
 | rollout EM 异常低 | prompt/模板不匹配 | baseline 检查点务必 `--no-chat`;instruct 模型务必默认 `--chat` |

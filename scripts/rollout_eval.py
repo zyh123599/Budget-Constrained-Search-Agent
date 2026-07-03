@@ -226,7 +226,8 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None, help="只跑前 N 条(冒烟/子采样)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--tensor-parallel", type=int, default=1)
-    parser.add_argument("--gpu-memory-utilization", type=float, default=0.85)
+    parser.add_argument("--gpu-memory-utilization", type=float, default=0.6,
+                        help="检索索引 fp16 分片共卡时留 ~16GB 余量;索引在 CPU 可提到 0.85")
     args = parser.parse_args()
 
     import pandas as pd

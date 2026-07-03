@@ -30,6 +30,7 @@ configs/
 scripts/
 ├── setup_env.sh         训练/检索双 conda 环境(verl + vLLM + FSDP / faiss-gpu)
 ├── setup_retrieval.sh   wiki-18 语料 + e5 索引下载与检索服务常驻
+├── retrieval_server.py  自包含检索服务(fp16 分片/单卡/CPU 三模式,API 兼容上游)
 ├── smoke_test.py        落地冒烟测试:核心性质 / 奖励链路 / 检索连通 / 训练栈
 ├── prepare_data.py      FlashRAG 数据 → 预算增广 parquet(训练采样 / 评测网格 / 消融变体)
 ├── run_baseline.sh      Gate 1:Search-R1 baseline 复现(env-check / eval / train-smoke)
