@@ -7,8 +7,15 @@ set -euo pipefail
 # ---------- 主训练环境 ----------
 conda create -n searchr1 python=3.10 -y
 conda run -n searchr1 pip install torch --index-url https://download.pytorch.org/whl/cu121
-conda run -n searchr1 pip install vllm verl wandb datasets pandas pyarrow requests accelerate
-conda run -n searchr1 pip install flash-attn --no-build-isolation
+conda run -n searchr1 pip install vllm verl wandb datasets pandas pyarrow requests accelerate einops
+
+# flash-attn:预编译 wheel 依赖较新 GLIBC;旧系统(如 GLIBC 2.31)装不上或
+# import 即崩。装不上就落到纯 PyTorch(SDPA)垫片,保证 verl 里的硬 import 通过。
+if ! conda run -n searchr1 pip install flash-attn --no-build-isolation \
+     || ! conda run -n searchr1 python -c "import flash_attn" 2>/dev/null; then
+  echo "flash-attn 不可用(多为 GLIBC 过旧),安装 SDPA 垫片兜底..."
+  conda run -n searchr1 python scripts/install_flashattn_shim.py
+fi
 
 # Search-R1 环境代码(本地检索版多轮 rollout 循环)
 if [ ! -d third_party/Search-R1 ]; then

@@ -335,7 +335,7 @@ def main() -> None:
 
 
 def _dump(trajs: list[Traj], path: Path) -> None:
-    with path.open("w") as f:
+    with path.open("w", encoding="utf-8") as f:
         for t in trajs:
             f.write(json.dumps({
                 "solution_str": t.solution,

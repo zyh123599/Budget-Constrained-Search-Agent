@@ -46,7 +46,7 @@ from budget_agent.verl_reward import _split_steps
 
 def evaluate(path: Path, alpha: float, config: RewardConfig) -> tuple[dict[str, TierResult], list[tuple[float, float]]]:
     by_tier: dict[str, list[dict]] = defaultdict(list)
-    with path.open() as f:
+    with path.open(encoding="utf-8") as f:
         for line in f:
             if line.strip():
                 traj = json.loads(line)

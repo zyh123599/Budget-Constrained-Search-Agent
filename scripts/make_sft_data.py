@@ -86,7 +86,8 @@ def main() -> None:
     kept, skipped = 0, 0
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with args.trajectories.open() as fin, out_path.open("w") as fout:
+    with args.trajectories.open(encoding="utf-8") as fin, \
+            out_path.open("w", encoding="utf-8") as fout:
         for line in fin:
             if not line.strip():
                 continue
