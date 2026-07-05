@@ -23,7 +23,7 @@ if [ ! -d third_party/Search-R1 ]; then
   git clone https://github.com/PeterGriffinJin/Search-R1.git third_party/Search-R1
 fi
 conda run -n searchr1 pip install -e third_party/Search-R1
-conda run -n searchr1 pip install -e .   # budget_agent 核心库
+conda run -n searchr1 pip install -e ".[dev]"   # budget_agent 核心库 + pytest(便于在 3.10 环境自测)
 
 # ---------- 检索服务环境(faiss-gpu 与训练栈依赖冲突,独立环境常驻)----------
 conda create -n retriever python=3.10 -y

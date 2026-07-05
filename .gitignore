@@ -8,7 +8,13 @@ __pycache__/
 data/
 runs/
 checkpoints/
+models/
+outputs/          # Hydra 运行目录(verl/Search-R1 默认输出)
 wandb/
 third_party/
+
+# 常见误生成物
+=*                # pip 重定向手滑(如 `pip install "x>=1.0"` 生成的 =1.0 文件)
+pip-*.log
 
 .DS_Store
